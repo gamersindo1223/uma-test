@@ -1101,8 +1101,8 @@ namespace Gallop.Live
                             {
                                 foreach (var cond in condGroup.propsConditionData)
                                 {
-                                    // Type=1 means CharaPosition condition
-                                    if (cond.Type == 1)
+                                    // Type=CharaPosition means character position condition
+                                    if (cond.Type == LiveTimelinePropsSettings.PropsConditionType.CharaPosition)
                                     {
                                         charactersWithProps.Add(cond.Value);
                                         Debug.Log($"[StageController] From JSON: Character {cond.Value} has prop (majorId={propGroup.charaPropsMajorId})");
