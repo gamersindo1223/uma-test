@@ -77,6 +77,8 @@ namespace Gallop.Live
         // Cache of timeline object visibility states for debugging
         public Dictionary<string, bool> CurrentTimelineObjectStates = new Dictionary<string, bool>();
 
+        // Store original parent transforms for uchiwa children so they can be restored
+        private Dictionary<Transform, Transform> _uchiwaChildOriginalParents = new Dictionary<Transform, Transform>();
         private void Awake()
         {
             InitializeStage();
@@ -980,6 +982,18 @@ namespace Gallop.Live
                 Debug.Log($"[StageController] UpdateObject: '{objName}' visibility = {actualVisibility} (inverted={invertVisibility}, raw={updateInfo.renderEnable}), AttachTarget = {updateInfo.AttachTarget}");
             }
 
+            // Special handling: When uchiwa parent becomes invisible, attach its uchiwa_l and uchiwa_r children to character hands
+            // This occurs at frame ~868 when the stage fans are hidden and characters hold them in their hands
+            if (objName.Contains("uchiwa") && !actualVisibility)
+            {
+                AttachUchiwaChildrenToCharacters(gameObject);
+            }
+            // When uchiwa becomes visible again (frame ~4867), restore children to original parent
+            else if (objName.Contains("uchiwa") && actualVisibility)
+            {
+                RestoreUchiwaChildrenToParent(gameObject);
+            }
+
             // Also update character props that match this object name or are associated with it
             // For uchiwa stage objects, also control the hand-held uchiwa props (propsName "1024")
             UpdateCharacterPropsVisibility(objName, updateInfo.renderEnable);
@@ -1036,6 +1050,105 @@ namespace Gallop.Live
             if (updateInfo.data.enableScale)
             {
                 gameObject.transform.localScale = updateInfo.updateData.scale;
+            }
+        }
+
+        /// <summary>
+        /// Attach uchiwa_l and uchiwa_r children from the uchiwa stage object to character hand bones.
+        /// Called when uchiwa parent visibility becomes False (frame ~868).
+        /// </summary>
+        private void AttachUchiwaChildrenToCharacters(GameObject uchiwaParent)
+        {
+            var locators = Director.instance?._liveTimelineControl?.liveCharactorLocators;
+            if (locators == null || locators.Length < 2)
+            {
+                Debug.LogWarning("[StageController] Cannot attach uchiwa children: character locators not available");
+                return;
+            }
+
+            // Find uchiwa_l and uchiwa_r children
+            Transform uchiwaL = uchiwaParent.transform.Find("mdl_env_live10129_uchiwa_l");
+            Transform uchiwaR = uchiwaParent.transform.Find("mdl_env_live10129_uchiwa_r");
+
+            if (uchiwaL == null && uchiwaR == null)
+            {
+                // Try searching in children recursively
+                foreach (Transform child in uchiwaParent.GetComponentsInChildren<Transform>(true))
+                {
+                    if (child.name.Contains("uchiwa_l")) uchiwaL = child;
+                    if (child.name.Contains("uchiwa_r")) uchiwaR = child;
+                }
+            }
+
+            // Attach uchiwa_l to character 0's right hand
+            if (uchiwaL != null)
+            {
+                var locator0 = locators[0] as Gallop.Live.Cutt.LiveTimelineCharaLocator;
+                if (locator0?.Bones != null && locator0.Bones.TryGetValue("Hand_Attach_R", out Transform handBone0))
+                {
+                    // Store original parent for later restoration
+                    if (!_uchiwaChildOriginalParents.ContainsKey(uchiwaL))
+                    {
+                        _uchiwaChildOriginalParents[uchiwaL] = uchiwaL.parent;
+                    }
+                    
+                    uchiwaL.SetParent(handBone0);
+                    uchiwaL.localPosition = Vector3.zero;
+                    uchiwaL.localRotation = Quaternion.identity;
+                    uchiwaL.gameObject.SetActive(true);
+                    Debug.Log($"[StageController] Attached uchiwa_l to character 0 hand");
+                }
+            }
+
+            // Attach uchiwa_r to character 1's right hand
+            if (uchiwaR != null && locators.Length > 1)
+            {
+                var locator1 = locators[1] as Gallop.Live.Cutt.LiveTimelineCharaLocator;
+                if (locator1?.Bones != null && locator1.Bones.TryGetValue("Hand_Attach_R", out Transform handBone1))
+                {
+                    // Store original parent for later restoration
+                    if (!_uchiwaChildOriginalParents.ContainsKey(uchiwaR))
+                    {
+                        _uchiwaChildOriginalParents[uchiwaR] = uchiwaR.parent;
+                    }
+                    
+                    uchiwaR.SetParent(handBone1);
+                    uchiwaR.localPosition = Vector3.zero;
+                    uchiwaR.localRotation = Quaternion.identity;
+                    uchiwaR.gameObject.SetActive(true);
+                    Debug.Log($"[StageController] Attached uchiwa_r to character 1 hand");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Restore uchiwa_l and uchiwa_r children to their original parent when uchiwa becomes visible again.
+        /// Called when uchiwa parent visibility becomes True (frame ~4867).
+        /// </summary>
+        private void RestoreUchiwaChildrenToParent(GameObject uchiwaParent)
+        {
+            // Restore all tracked uchiwa children to their original parents
+            var toRemove = new List<Transform>();
+            
+            foreach (var kvp in _uchiwaChildOriginalParents)
+            {
+                Transform child = kvp.Key;
+                Transform originalParent = kvp.Value;
+                
+                if (child != null && originalParent != null)
+                {
+                    child.SetParent(originalParent);
+                    child.localPosition = Vector3.zero;
+                    child.localRotation = Quaternion.identity;
+                    Debug.Log($"[StageController] Restored {child.name} to original parent");
+                    toRemove.Add(child);
+                }
+            }
+            
+            // Clear restored entries
+            foreach (var child in toRemove)
+            {
+                _uchiwaChildOriginalParents.Remove(child);
             }
         }
 
