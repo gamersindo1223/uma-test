@@ -654,6 +654,28 @@ namespace Gallop.Live
                     _liveTimelineControl.AlterLateUpdate();
                  }
             }
+
+            // Periodic cleanup of duplicate audio listeners (every 60 frames)
+            if (Time.frameCount % 60 == 0)
+            {
+                EnsureSingleAudioListener();
+            }
+        }
+
+        /// <summary>
+        /// Ensure only one AudioListener is active in the scene
+        /// </summary>
+        private void EnsureSingleAudioListener()
+        {
+            var listeners = FindObjectsOfType<AudioListener>();
+            if (listeners.Length > 1)
+            {
+                // Keep the first one, destroy the rest
+                for (int i = 1; i < listeners.Length; i++)
+                {
+                    DestroyImmediate(listeners[i]);
+                }
+            }
         }
 
         private void FixedUpdate()
@@ -766,6 +788,46 @@ namespace Gallop.Live
                 {
                     bool vis = drumStage != null && drumStage.activeSelf;
                     GUI.Label(new Rect(x, y, 300, 20), $"Drum Stage: {(vis ? "VISIBLE" : "HIDDEN")}", vis ? visibleStyle : hiddenStyle);
+                }
+            }
+
+            // Draw character name labels above each character's head
+            if (CharaContainerScript != null && Camera.main != null)
+            {
+                GUIStyle charLabelStyle = new GUIStyle();
+                charLabelStyle.fontSize = 14;
+                charLabelStyle.fontStyle = FontStyle.Bold;
+                charLabelStyle.alignment = TextAnchor.MiddleCenter;
+                charLabelStyle.normal.textColor = Color.yellow;
+
+                GUIStyle charShadowStyle = new GUIStyle(charLabelStyle);
+                charShadowStyle.normal.textColor = Color.black;
+
+                for (int i = 0; i < CharaContainerScript.Count; i++)
+                {
+                    var container = CharaContainerScript[i];
+                    if (container == null) continue;
+
+                    // Get head position (or use container position + offset)
+                    Vector3 headPos = container.transform.position + Vector3.up * 2f;
+                    
+                    // Convert to screen coordinates
+                    Vector3 screenPos = Camera.main.WorldToScreenPoint(headPos);
+                    
+                    // Check if in front of camera
+                    if (screenPos.z > 0)
+                    {
+                        // Flip Y coordinate (Unity GUI has Y from top)
+                        float screenY = Screen.height - screenPos.y;
+                        
+                        string charName = container.CharaEntry?.Name ?? $"Char{i}";
+                        string label = $"[{i}] {charName}";
+                        
+                        // Draw shadow
+                        GUI.Label(new Rect(screenPos.x - 99, screenY - 29, 200, 30), label, charShadowStyle);
+                        // Draw text
+                        GUI.Label(new Rect(screenPos.x - 100, screenY - 30, 200, 30), label, charLabelStyle);
+                    }
                 }
             }
         }

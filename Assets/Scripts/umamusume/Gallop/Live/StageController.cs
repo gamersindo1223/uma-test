@@ -1056,6 +1056,7 @@ namespace Gallop.Live
         /// <summary>
         /// Attach uchiwa_l and uchiwa_r children from the uchiwa stage object to character hand bones.
         /// Called when uchiwa parent visibility becomes False (frame ~868).
+        /// Finds characters who don't already have props in their hands.
         /// </summary>
         private void AttachUchiwaChildrenToCharacters(GameObject uchiwaParent)
         {
@@ -1080,44 +1081,92 @@ namespace Gallop.Live
                 }
             }
 
-            // NOTE: Character 0 is the mic holder, so skip them for uchiwa!
-            // Attach uchiwa_l to character 1's right hand (not character 0 who holds mic)
-            if (uchiwaL != null && locators.Length > 1)
+            // Find characters WITHOUT props in their hands
+            // Skip: character 0 (mic holder, majorId 1024)
+            // Skip: characters with drumsticks (majorId 1355, 1400)
+            var availableCharacters = new List<int>();
+            for (int i = 0; i < locators.Length; i++)
             {
-                var locator1 = locators[1] as Gallop.Live.Cutt.LiveTimelineCharaLocator;
-                if (locator1?.Bones != null && locator1.Bones.TryGetValue("Hand_Attach_R", out Transform handBone1))
+                bool hasHandProp = false;
+                
+                // Check if this character has any props attached
+                foreach (var propList in _characterPropsByMajorId.Values)
                 {
-                    // Store original parent for later restoration
+                    foreach (var prop in propList)
+                    {
+                        if (prop == null) continue;
+                        // Check if prop name indicates it's attached to this character
+                        if (prop.name.Contains($"_char{i}_"))
+                        {
+                            hasHandProp = true;
+                            break;
+                        }
+                    }
+                    if (hasHandProp) break;
+                }
+                
+                if (!hasHandProp)
+                {
+                    availableCharacters.Add(i);
+                    Debug.Log($"[StageController] Character {i} has no props, available for uchiwa");
+                }
+                else
+                {
+                    Debug.Log($"[StageController] Character {i} has props, skipping for uchiwa");
+                }
+            }
+
+            // Need at least 2 available characters for both uchiwa
+            if (availableCharacters.Count < 2)
+            {
+                Debug.LogWarning($"[StageController] Only {availableCharacters.Count} characters without props, need 2 for uchiwa");
+                // Fallback: use characters 4 and 5 if available
+                availableCharacters.Clear();
+                if (locators.Length > 4) availableCharacters.Add(4);
+                if (locators.Length > 5) availableCharacters.Add(5);
+            }
+
+            // Attach uchiwa_l to first available character
+            if (uchiwaL != null && availableCharacters.Count > 0)
+            {
+                int charIndex = availableCharacters[0];
+                var locator = locators[charIndex] as Gallop.Live.Cutt.LiveTimelineCharaLocator;
+                if (locator?.Bones != null && locator.Bones.TryGetValue("Hand_Attach_R", out Transform handBone))
+                {
                     if (!_uchiwaChildOriginalParents.ContainsKey(uchiwaL))
                     {
                         _uchiwaChildOriginalParents[uchiwaL] = uchiwaL.parent;
                     }
                     
-                    uchiwaL.SetParent(handBone1);
+                    uchiwaL.SetParent(handBone);
                     uchiwaL.localPosition = Vector3.zero;
                     uchiwaL.localRotation = Quaternion.identity;
                     uchiwaL.gameObject.SetActive(true);
-                    Debug.Log($"[StageController] Attached uchiwa_l to character 1 hand");
+                    
+                    string charName = locator.UmaContainer?.CharaEntry?.Name ?? $"Char{charIndex}";
+                    Debug.Log($"[StageController] Attached uchiwa_l to character {charIndex} ({charName}) hand");
                 }
             }
 
-            // Attach uchiwa_r to character 2's right hand
-            if (uchiwaR != null && locators.Length > 2)
+            // Attach uchiwa_r to second available character
+            if (uchiwaR != null && availableCharacters.Count > 1)
             {
-                var locator2 = locators[2] as Gallop.Live.Cutt.LiveTimelineCharaLocator;
-                if (locator2?.Bones != null && locator2.Bones.TryGetValue("Hand_Attach_R", out Transform handBone2))
+                int charIndex = availableCharacters[1];
+                var locator = locators[charIndex] as Gallop.Live.Cutt.LiveTimelineCharaLocator;
+                if (locator?.Bones != null && locator.Bones.TryGetValue("Hand_Attach_R", out Transform handBone))
                 {
-                    // Store original parent for later restoration
                     if (!_uchiwaChildOriginalParents.ContainsKey(uchiwaR))
                     {
                         _uchiwaChildOriginalParents[uchiwaR] = uchiwaR.parent;
                     }
                     
-                    uchiwaR.SetParent(handBone2);
+                    uchiwaR.SetParent(handBone);
                     uchiwaR.localPosition = Vector3.zero;
                     uchiwaR.localRotation = Quaternion.identity;
                     uchiwaR.gameObject.SetActive(true);
-                    Debug.Log($"[StageController] Attached uchiwa_r to character 2 hand");
+                    
+                    string charName = locator.UmaContainer?.CharaEntry?.Name ?? $"Char{charIndex}";
+                    Debug.Log($"[StageController] Attached uchiwa_r to character {charIndex} ({charName}) hand");
                 }
             }
         }
