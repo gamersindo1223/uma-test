@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEngine;
+using UnityEngine.EventSystems;
 
 namespace Gallop.Live
 {
@@ -106,6 +107,9 @@ namespace Gallop.Live
                     Debug.Log(live.BackGroundId);
                     Builder.LoadAssetPath(string.Format(STAGE_PATH, live.BackGroundId), transform);
                     _liveTimelineControl.StageObjectMap = _stageController.StageObjectMap;
+
+                    // Cleanup duplicate EventSystem and AudioListener components from loaded prefabs
+                    CleanupDuplicateSingletons();
                 }
 
                 //Make CharacterObject
@@ -146,13 +150,103 @@ namespace Gallop.Live
             }
         }
 
+        /// <summary>
+        /// Cleanup duplicate EventSystem and AudioListener components from loaded prefabs.
+        /// Unity requires exactly one of each in the scene.
+        /// </summary>
+        private void CleanupDuplicateSingletons()
+        {
+            // Cleanup duplicate EventSystems - keep only the first one found
+            var eventSystems = FindObjectsOfType<EventSystem>();
+            if (eventSystems.Length > 1)
+            {
+                Debug.Log($"[Director] Found {eventSystems.Length} EventSystems, cleaning up duplicates...");
+                // Keep the first one, destroy the rest (only the component, not the whole GameObject)
+                for (int i = 1; i < eventSystems.Length; i++)
+                {
+                    Debug.Log($"[Director] Destroying duplicate EventSystem component on: {eventSystems[i].gameObject.name}");
+                    DestroyImmediate(eventSystems[i]);
+                }
+            }
+
+            // Cleanup duplicate AudioListeners - DISABLE (not destroy) all except one
+            // Prefer keeping the one on LiveUI since it's always active (cameras get deactivated/switched)
+            var audioListeners = FindObjectsOfType<AudioListener>();
+            if (audioListeners.Length > 1)
+            {
+                Debug.Log($"[Director] Found {audioListeners.Length} AudioListeners, disabling duplicates...");
+
+                // Prefer the one on LiveUI since it stays active even when cameras switch
+                AudioListener keepListener = null;
+                foreach (var listener in audioListeners)
+                {
+                    if (listener.gameObject.name == "LiveUI" || listener.gameObject.name.Contains("LiveUI"))
+                    {
+                        keepListener = listener;
+                        break;
+                    }
+                }
+
+                // Fallback: keep the first one on Main Camera
+                if (keepListener == null)
+                {
+                    foreach (var listener in audioListeners)
+                    {
+                        if (listener.GetComponent<Camera>() != null && listener.gameObject.CompareTag("MainCamera"))
+                        {
+                            keepListener = listener;
+                            break;
+                        }
+                    }
+                }
+
+                // Fallback: keep the first one on any camera
+                if (keepListener == null)
+                {
+                    foreach (var listener in audioListeners)
+                    {
+                        if (listener.GetComponent<Camera>() != null)
+                        {
+                            keepListener = listener;
+                            break;
+                        }
+                    }
+                }
+
+                // Fallback: keep the first one if no camera-attached listener found
+                if (keepListener == null)
+                {
+                    keepListener = audioListeners[0];
+                }
+
+                // DESTROY (not just disable) all except the one we want to keep
+                // This ensures Unity doesn't warn about multiple audio listeners
+                foreach (var listener in audioListeners)
+                {
+                    if (listener != keepListener)
+                    {
+                        Debug.Log($"[Director] Destroying duplicate AudioListener on: {listener.gameObject.name}");
+                        DestroyImmediate(listener);
+                    }
+                }
+
+                Debug.Log($"[Director] Kept AudioListener on: {keepListener.gameObject.name}");
+            }
+            else if (audioListeners.Length == 0)
+            {
+                // No AudioListeners found - add one to ensure audio works
+                Debug.LogWarning("[Director] No AudioListener found! Adding one to Director.");
+                gameObject.AddComponent<AudioListener>();
+            }
+        }
+
         public void InitializeUI()
         {
             UI = GameObject.Find("LiveUI").GetComponent<LiveViewerUI>();
 
             sliderControl = UI.ProgressBar.GetComponent<SliderControl>();
             LiveViewerUI.Instance.RecordingUI.SetActive(IsRecordVMD);
-            LiveViewerUI.Instance.RecordingText.text = $"�� Recording...\r\n VMD will be saved in {Path.GetFullPath(Application.dataPath + UnityHumanoidVMDRecorder.FileSavePath)}";
+            LiveViewerUI.Instance.RecordingText.text = $"�� Recording...\r\n VMD will be saved in {Path.GetFullPath(Application.dataPath + UnityHumanoidVMDRecorder.FileSavePath)}";
         }
 
         public void InitializeTimeline(List<LiveCharacterSelect> characters, int mode)
@@ -266,6 +360,22 @@ namespace Gallop.Live
             };
 
             SetupCharacterLocator();
+
+            // Load main performer props (microphones, etc.) - must be after locators are set up
+            _stageController?.LoadCharacterProps();
+
+            // Load stage props (drums, signs, etc.) - these are NOT attached to characters
+            _stageController?.LoadStageProps();
+
+            // NEW: Load props directly referenced in timeline objectList (e.g., drums)
+            _stageController?.LoadPropsFromTimeline();
+
+            // NEW: Build timeline-to-prop mapping table for unified control
+            _stageController?.BuildTimelinePropMapping();
+
+            // Prepare timeline-controlled objects (set them inactive initially so timeline controls visibility)
+            _stageController?.PrepareTimelineObjects();
+
             InitializeCamera();
             UpdateMainCamera();
             InitializeMultiCamera(_liveTimelineControl);
@@ -426,7 +536,10 @@ namespace Gallop.Live
 
         private void OnTimelineUpdate(float _liveCurrentTime)
         {
-            _liveTimelineControl.AlterUpdate(_liveCurrentTime);
+            if (_liveTimelineControl != null)
+            {
+                _liveTimelineControl.AlterUpdate(_liveCurrentTime);
+            }
             if (!_soloMode)
             {
                 UmaViewerAudio.AlterUpdate(_liveCurrentTime, partInfo, liveVocal, sliderControl.is_Outed);
@@ -472,8 +585,11 @@ namespace Gallop.Live
                         }
 
                         UI.ProgressBar.SetValueWithoutNotify(_liveCurrentTime / totalTime);
-                        OnTimelineUpdate(_liveCurrentTime);
-                        _liveTimelineControl.AlterLateUpdate();
+                        OnTimelineUpdate(_liveCurrentTime); // Safe now
+                         if (_liveTimelineControl != null)
+                         {
+                             _liveTimelineControl.AlterLateUpdate();
+                         }
                     }
                     else if (sliderControl.is_Outed)
                     {
@@ -533,13 +649,131 @@ namespace Gallop.Live
         {
             if (_isLiveSetup && _syncTime && !IsRecordVMD)
             {
-                _liveTimelineControl.AlterLateUpdate();
+                 if (_liveTimelineControl != null)
+                 {
+                    _liveTimelineControl.AlterLateUpdate();
+                 }
             }
         }
 
         private void FixedUpdate()
         {
-            LiveViewerUI.Instance.UpdateLyrics(_liveCurrentTime);
+            if (LiveViewerUI.Instance != null)
+            {
+                LiveViewerUI.Instance.UpdateLyrics(_liveCurrentTime);
+            }
+        }
+
+        private void OnGUI()
+        {
+            // Enhanced Debug Overlay with box background
+            float panelX = 5;
+            float panelY = 5;
+            float panelWidth = 320;
+            float lineHeight = 22;
+            float padding = 8;
+
+            // Count lines to determine panel height
+            int lineCount = 3; // Time info
+            if (_stageController != null)
+            {
+                lineCount += 1; // Header
+                lineCount += 6; // Props (Fan, Sticks R, Sticks L, Mic, Uchiwa Stage, Drum)
+            }
+            float panelHeight = (lineCount * lineHeight) + (padding * 2) + 15;
+
+            // Draw semi-transparent background box
+            Texture2D bgTex = new Texture2D(1, 1);
+            bgTex.SetPixel(0, 0, new Color(0, 0, 0, 0.7f));
+            bgTex.Apply();
+            GUI.DrawTexture(new Rect(panelX, panelY, panelWidth, panelHeight), bgTex);
+
+            // Styles
+            GUIStyle headerStyle = new GUIStyle();
+            headerStyle.fontSize = 16;
+            headerStyle.fontStyle = FontStyle.Bold;
+            headerStyle.normal.textColor = Color.cyan;
+
+            GUIStyle labelStyle = new GUIStyle();
+            labelStyle.fontSize = 14;
+            labelStyle.normal.textColor = Color.white;
+
+            GUIStyle visibleStyle = new GUIStyle(labelStyle);
+            visibleStyle.normal.textColor = Color.green;
+
+            GUIStyle hiddenStyle = new GUIStyle(labelStyle);
+            hiddenStyle.normal.textColor = new Color(1f, 0.5f, 0.5f); // Light red
+
+            float x = panelX + padding;
+            float y = panelY + padding;
+
+            // Time info
+            int timelineFrame = Mathf.RoundToInt(_liveCurrentTime * 60f);
+            GUI.Label(new Rect(x, y, 300, 20), $"Time: {_liveCurrentTime:F2}s | Frame: {timelineFrame}", labelStyle);
+            y += lineHeight;
+            GUI.Label(new Rect(x, y, 300, 20), $"Unity Frame: {Time.frameCount}", labelStyle);
+            y += lineHeight + 5;
+
+            // Props section
+            if (_stageController != null)
+            {
+                // Header with box
+                GUI.Label(new Rect(x, y, 300, 20), "═══ PROP STATUS ═══", headerStyle);
+                y += lineHeight + 2;
+
+                // Fan (1024)
+                if (_stageController._characterPropsByMajorId.TryGetValue(1024, out var fanProps))
+                {
+                    bool vis = fanProps.Count > 0 && fanProps[0] != null && fanProps[0].activeSelf;
+                    GUI.Label(new Rect(x, y, 300, 20), $"Fan (1024): {(vis ? "VISIBLE" : "HIDDEN")} [{fanProps.Count}]", vis ? visibleStyle : hiddenStyle);
+                    y += lineHeight;
+                }
+
+                // Sticks R (1355)
+                if (_stageController._characterPropsByMajorId.TryGetValue(1355, out var sticksR))
+                {
+                    bool vis = sticksR.Count > 0 && sticksR[0] != null && sticksR[0].activeSelf;
+                    GUI.Label(new Rect(x, y, 300, 20), $"Sticks R (1355): {(vis ? "VISIBLE" : "HIDDEN")} [{sticksR.Count}]", vis ? visibleStyle : hiddenStyle);
+                    y += lineHeight;
+                }
+
+                // Sticks L (1400)
+                if (_stageController._characterPropsByMajorId.TryGetValue(1400, out var sticksL))
+                {
+                    bool vis = sticksL.Count > 0 && sticksL[0] != null && sticksL[0].activeSelf;
+                    GUI.Label(new Rect(x, y, 300, 20), $"Sticks L (1400): {(vis ? "VISIBLE" : "HIDDEN")} [{sticksL.Count}]", vis ? visibleStyle : hiddenStyle);
+                    y += lineHeight;
+                }
+
+                // Mic (003)
+                if (_stageController._characterProps.TryGetValue("003", out var micProps))
+                {
+                    bool vis = micProps.Count > 0 && micProps[0] != null && micProps[0].activeSelf;
+                    GUI.Label(new Rect(x, y, 300, 20), $"Mic (003): {(vis ? "VISIBLE" : "HIDDEN")} [{micProps.Count}]", vis ? visibleStyle : hiddenStyle);
+                    y += lineHeight;
+                }
+
+                // Uchiwa Stage
+                if (_stageController.StageObjectMap.TryGetValue("pfb_env_live10129_uchiwa000", out var uchiwaStage))
+                {
+                    bool vis = uchiwaStage != null && uchiwaStage.activeSelf;
+                    GUI.Label(new Rect(x, y, 300, 20), $"Uchiwa Stage: {(vis ? "VISIBLE" : "HIDDEN")}", vis ? visibleStyle : hiddenStyle);
+                    y += lineHeight;
+                }
+
+                // Drum Stage
+                if (_stageController.StageObjectMap.TryGetValue("pfb_chr_prop1401_00_Variant", out var drumStage))
+                {
+                    bool vis = drumStage != null && drumStage.activeSelf;
+                    GUI.Label(new Rect(x, y, 300, 20), $"Drum Stage: {(vis ? "VISIBLE" : "HIDDEN")}", vis ? visibleStyle : hiddenStyle);
+                }
+            }
+        }
+        
+        private void DrawShadowedLabel(float x, float y, string text, GUIStyle style, GUIStyle shadowStyle)
+        {
+            GUI.Label(new Rect(x + 1, y + 1, 400, 30), text, shadowStyle);
+            GUI.Label(new Rect(x, y, 400, 30), text, style);
         }
 
         DateTime ExitTime;

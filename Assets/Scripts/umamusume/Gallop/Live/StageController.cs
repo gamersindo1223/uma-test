@@ -1080,11 +1080,12 @@ namespace Gallop.Live
                 }
             }
 
-            // Attach uchiwa_l to character 0's right hand
-            if (uchiwaL != null)
+            // NOTE: Character 0 is the mic holder, so skip them for uchiwa!
+            // Attach uchiwa_l to character 1's right hand (not character 0 who holds mic)
+            if (uchiwaL != null && locators.Length > 1)
             {
-                var locator0 = locators[0] as Gallop.Live.Cutt.LiveTimelineCharaLocator;
-                if (locator0?.Bones != null && locator0.Bones.TryGetValue("Hand_Attach_R", out Transform handBone0))
+                var locator1 = locators[1] as Gallop.Live.Cutt.LiveTimelineCharaLocator;
+                if (locator1?.Bones != null && locator1.Bones.TryGetValue("Hand_Attach_R", out Transform handBone1))
                 {
                     // Store original parent for later restoration
                     if (!_uchiwaChildOriginalParents.ContainsKey(uchiwaL))
@@ -1092,19 +1093,19 @@ namespace Gallop.Live
                         _uchiwaChildOriginalParents[uchiwaL] = uchiwaL.parent;
                     }
                     
-                    uchiwaL.SetParent(handBone0);
+                    uchiwaL.SetParent(handBone1);
                     uchiwaL.localPosition = Vector3.zero;
                     uchiwaL.localRotation = Quaternion.identity;
                     uchiwaL.gameObject.SetActive(true);
-                    Debug.Log($"[StageController] Attached uchiwa_l to character 0 hand");
+                    Debug.Log($"[StageController] Attached uchiwa_l to character 1 hand");
                 }
             }
 
-            // Attach uchiwa_r to character 1's right hand
-            if (uchiwaR != null && locators.Length > 1)
+            // Attach uchiwa_r to character 2's right hand
+            if (uchiwaR != null && locators.Length > 2)
             {
-                var locator1 = locators[1] as Gallop.Live.Cutt.LiveTimelineCharaLocator;
-                if (locator1?.Bones != null && locator1.Bones.TryGetValue("Hand_Attach_R", out Transform handBone1))
+                var locator2 = locators[2] as Gallop.Live.Cutt.LiveTimelineCharaLocator;
+                if (locator2?.Bones != null && locator2.Bones.TryGetValue("Hand_Attach_R", out Transform handBone2))
                 {
                     // Store original parent for later restoration
                     if (!_uchiwaChildOriginalParents.ContainsKey(uchiwaR))
@@ -1112,11 +1113,11 @@ namespace Gallop.Live
                         _uchiwaChildOriginalParents[uchiwaR] = uchiwaR.parent;
                     }
                     
-                    uchiwaR.SetParent(handBone1);
+                    uchiwaR.SetParent(handBone2);
                     uchiwaR.localPosition = Vector3.zero;
                     uchiwaR.localRotation = Quaternion.identity;
                     uchiwaR.gameObject.SetActive(true);
-                    Debug.Log($"[StageController] Attached uchiwa_r to character 1 hand");
+                    Debug.Log($"[StageController] Attached uchiwa_r to character 2 hand");
                 }
             }
         }
