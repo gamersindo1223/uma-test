@@ -1081,38 +1081,60 @@ namespace Gallop.Live
                 }
             }
 
-            // Find characters WITHOUT props in their hands
-            // Skip: character 0 (mic holder, majorId 1024)
-            // Skip: characters with drumsticks (majorId 1355, 1400)
+            // Use propsSettings data to determine which characters have props
+            // From propsConditionGroup: Type=1 (CharaPosition), Value = character index
+            var charactersWithProps = new HashSet<int>();
+            
+            var data = Director.instance?._liveTimelineControl?.data;
+            if (data?.propsSettings?.propsDataGroup != null)
+            {
+                foreach (var propGroup in data.propsSettings.propsDataGroup)
+                {
+                    // Skip non-character props
+                    if (!propGroup.isCharaProps) continue;
+                    
+                    if (propGroup.propsConditionGroup != null)
+                    {
+                        foreach (var condGroup in propGroup.propsConditionGroup)
+                        {
+                            if (condGroup.propsConditionData != null)
+                            {
+                                foreach (var cond in condGroup.propsConditionData)
+                                {
+                                    // Type=1 means CharaPosition condition
+                                    if (cond.Type == 1)
+                                    {
+                                        charactersWithProps.Add(cond.Value);
+                                        Debug.Log($"[StageController] From JSON: Character {cond.Value} has prop (majorId={propGroup.charaPropsMajorId})");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // Fallback if data not available - hardcode known values
+                Debug.LogWarning("[StageController] propsSettings not available, using hardcoded prop assignments");
+                charactersWithProps.Add(0); // mic
+                charactersWithProps.Add(1); // drumstick
+                charactersWithProps.Add(2); // drumstick (both hands)
+                charactersWithProps.Add(3); // drumstick
+            }
+
+            // Find available characters (those NOT in charactersWithProps)
             var availableCharacters = new List<int>();
             for (int i = 0; i < locators.Length; i++)
             {
-                bool hasHandProp = false;
-                
-                // Check if this character has any props attached
-                foreach (var propList in _characterPropsByMajorId.Values)
-                {
-                    foreach (var prop in propList)
-                    {
-                        if (prop == null) continue;
-                        // Check if prop name indicates it's attached to this character
-                        if (prop.name.Contains($"_char{i}_"))
-                        {
-                            hasHandProp = true;
-                            break;
-                        }
-                    }
-                    if (hasHandProp) break;
-                }
-                
-                if (!hasHandProp)
+                if (!charactersWithProps.Contains(i))
                 {
                     availableCharacters.Add(i);
-                    Debug.Log($"[StageController] Character {i} has no props, available for uchiwa");
+                    Debug.Log($"[StageController] Character {i} has NO props, available for uchiwa");
                 }
                 else
                 {
-                    Debug.Log($"[StageController] Character {i} has props, skipping for uchiwa");
+                    Debug.Log($"[StageController] Character {i} HAS props, skipping for uchiwa");
                 }
             }
 
